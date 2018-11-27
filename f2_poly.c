@@ -5,112 +5,107 @@
 #include <fcntl.h>
 #include <string.h>
 #include <error.h>
+#include <math.h>
 #include "f2_poly.h"
 #include "arithm.h"
 
-
-size_t
-f2_poly_deg(f2_poly_t p){// La fonction qui calcule le degré d'un polynome.
-  size_t res = LEN-1 ; // Nous prenons un entier égal au degrès maximale que peut avoir un polynome
-  while(!((p>>res) & 1)){ // Une boucle qui permet de parcourir les bits
-    if(res<0)// jusqu'à arriver au premier bit non nul,
-      return -1 ;// Si le polynome est égale à 0, nous retournons -1
-    res-- ;
-  }
-  return res ;
+#ifdef __GNUC__
+/* clzll: GCC builtin function returning the number of leading-0 for unsigned long long */
+int8_t
+f2_poly_deg(f2_poly_t p){
+  return (p == ZERO) ? ZERO : __builtin_clzll(p)-1;
+}
+#else
+/* Computes the degree of a polynomial */
+/* by successively shifting the value representing the polynomial until the MSD is found */
+/* return -1 if the polynomial is null */
+int8_t
+f2_poly_deg(f2_poly_t p){
+  int8_t i = LEN-1 ;
+  if (p == 0x0) return -1;
+  while (NTH_BIT_IS_ZERO(p,i)) {i--;};
+  return i;
 }
 
-int
+void
 f2_poly_print(f2_poly_t p, const char c , FILE * fd){
-  int i ;
-  for(i = LEN -1; i>1 ; i-- ){ // Une boucle qui permet de parcourir les bits
-      if((p>>i) & 1){ // à chaque fois qu'un bit est égale à 1
-        fprintf(fd," + %c^%d ",c,i); // On l'affiche par le caractere donné argument
-      }
+  char fmt_xn[] = {" + %c^%d", ""};
+  char fmt_x1[] = {" + %c", ""};
+  char fmt_x0[] = {" + 1", ""};
+  int8_t nn_MSD = f2_poly_deg(p);
+  fprintf(fd, "%c^%d ", c, nn_msd);
+
+  for (int i = nn_MSD-1; i >= 0; i--)
+    fprintf(fd, fmt_xn[GET_NTH_BIT(p,i)], c, i);
+  
+  fprintf(fd, fmt_x1[GET_NTH_BIT(p,1)]);
+  fprintf(fd, fmt_x0[GET_NTH_BIT(p,0)]);
+}
+
+/* Compute the rest of the euclidian division*/
+f2_poly_t
+f2_poly_rem(f2_poly_t p, f2_poly_t q) {
+  if (IS_NULL(q)) return 0;
+  if (p < q) return p; // equivalent to deg_P < deg_Q since they are integers
+  
+  f2_poly_t res = p;
+  int8_t deg_q = f2_poly_deg(q);
+  int8_t deg_p = f2_poly_deg(p);
+  int8_t deg_diff = deg_p - deg_q;
+  
+  while (res >= q) {
+    res ^= (q << deg_diff);
+    deg_diff = f2_poly_deg(res) - deg_q;
   }
-  if(p&(1<<i)){ // le cas ou nous arrivons au monome X
-    fprintf(fd, " + %c ", c);
-  }
-  if(p&(1)){ // Le cas ou nous arrivons au monome constant
-    fprintf(fd," + 1 ");
-  }
-  fprintf(fd,"\n");// Pour plus de lisibilité, après un affichage, on revient a la ligne
-  return 0;
+
+  return res;
 }
 
 f2_poly_t
-f2_poly_rem(f2_poly_t p, f2_poly_t q){
-  if (q){ // condition : q is not 0
-    f2_poly_t res = p ;
-    if(f2_poly_deg(p)< f2_poly_deg(q)){ // Le cas ou le polynome dividande est plus petit que le divseur,
-      return p ; // dans ces cas la, le reste de la division euclidienne c'est le diviseur
-    }
-    else { // Sinon
-      size_t deg_diff = f2_poly_deg(p)-f2_poly_deg(q) ; // On stocke la difference des deux polynomes
-      while (f2_poly_deg(res)>= f2_poly_deg(q)) { // tant que le polynome dividande est plus grand que le diviseur
-        res^=(q<<deg_diff) ; // Un Xor ici équivaut à une soustraction dans F2 (on soustrait le polynome diviseur decalé de q)
-        deg_diff = f2_poly_deg(res)-f2_poly_deg(q); // on remet un jour la difference des degré des polynomes
-      }
-    }
-    return res ; // on retourne le reste.
-  } else {
-    return 0 ;
-  }
-}
-
-
-int
 f2_poly_div(f2_poly_t * R ,f2_poly_t * Q , f2_poly_t dnd, f2_poly_t der){
-  *Q = 0 ;// On initialise Q à 0
-  *R = 0 ; // On initialise R à 0 également (la valeur pointée et non le pointeur )
-  if (dnd){ // condition : dnd is not 0
-    if(f2_poly_deg(dnd)< f2_poly_deg(der)){ // Ici, c'est le cas ou le degré du diviseur est plus grand que celui du dividande
-      return dnd ; // on retourne donc uniquement le dividande
+  *Q = 0;
+  *R = 0;
+
+  if (dnd == 0 || dnd < der) return dnd;
+  
+  int8_t deg_dnd = f2_poly_deg(dnd);
+  int8_t deg_der = f2_poly_deg(der);
+  int8_t deg_diff = f2_poly_deg(dnd);
+
+  f2_poly_t r = dnd, q = 0;
+  
+  while (deg_diff >= deg_der) {
+    if (NTH_BIT_IS_ONE(r, deg_diff)) {
+      r ^= der << (deg_diff - deg_der);
+      q ^= ONE << (deg_diff - deg_der);
     }
-    else { // Sinon
-      *R = dnd ; // On initialise la valeur pointée par le pointeur R à dnd
-      size_t deg_diff = f2_poly_deg(*R);
-      while (deg_diff >= f2_poly_deg(der)) { // tant que le degré du dividande est plus grande que celle du diviseur
-        if(((*R)>> deg_diff) & 1 ){ // Si le bit a la position deg_diff est égale à 1
-          *R^=(der<<(deg_diff-f2_poly_deg(der))) ; // On soustrait à R le diviseur (Un Xor equivaut à une soustraction dans F2)
-          *Q^=(1 << (deg_diff -f2_poly_deg(der))) ; // On ajoute à Q un bit à 1 à la position correspondant à la division
-        }
-        deg_diff-- ; // on met à jour le nouveau degrés
-      }
-    }
-    return 0 ;
-  } else {
-    return 0 ;
+    deg_diff--;
   }
+  
+  *Q = q;
+  *R = r;
+
+  return 0;
 }
 
 f2_poly_t
 f2_poly_gcd(f2_poly_t a, f2_poly_t b){
   f2_poly_t d = 0;
-
-  // a et b sont pairs, division par 2 autant que possible et calcul de d
-  while (((a&1)==0)&&((b&1)==0)){
-      a>>=1; // a/2
-      b>>=1; // b/2
-      d+=1; // décalage (multiplication par 2 au résultat)
-    }
-
-  // un des deux est impair:
-  while ((a&1)==0) {
-    a>>=1; // a/2 tant que a est pair
-  }
-  while ((b&1)==0){
-    b>>=1; // b/2 tant que b est pair
+  
+  while (NTH_BIT_IS_ONE(a,0) && NTH_BIT_IS_ONE(b,0)) {
+    a >>= ONE;
+    b >>= ONE;
+    d++;
   }
 
-  // les deux sont impairs
-  while (a != b) { // Tant que les deux seront différents, on effectue des soustractions successives
-    if (a > b) {a-=b;}
-    else b-=a;
+  while (NTH_BIT_IS_ONE(a,0)) { a >>= ONE; }
+  while (NTH_BIT_IS_ONE(b,0)) { b >>= ONE; }
+
+  while (a != b) {
+    a -= (a < b) ? b : 0;
+    b -= (a < b) ? 0 : a;
   }
-
-  return a<<d;
-
+  return a << d;
 }
 
 f2_poly_t
@@ -119,15 +114,14 @@ f2_poly_xtimes(f2_poly_t a , f2_poly_t b ){ //
 }
 
 f2_poly_t
-f2_poly_times(f2_poly_t a, f2_poly_t b , f2_poly_t n){ //
-  f2_poly_t res = 0 ;// On initialise le resultat à  0
-  size_t len_b = f2_poly_deg(b);// on saisie le degré de b
-  for(size_t i = 0 ; i <= len_b ; i++ ){ // Nous allons boucler pour arriver jussqu'au degré du polynome b
-    if((b>>i)&1){ // Si nous avons un 1 a la position i, alors
-      res ^= f2_poly_rem((a<<(i)),n);// Nous effectuons un decaler de i position vers la droite (mupliplication par X^I) et reduison modulo N
-    }
+f2_poly_times(f2_poly_t a, f2_poly_t b , f2_poly_t n){
+  f2_poly_t res = 0;
+  int8_t deg_b = f2_poly_deg(b);
+
+  for (int i = 0; i <= deg_b; i++) {
+    if (NTH_BIT_IS_ONE(b,i)) res ^= f2_poly_rem(a<<i, n);
   }
-  return res ;// On retourne le resulats
+  return res;
 }
 
 f2_poly_t
@@ -139,11 +133,18 @@ f2_poly_x2n(size_t pow, f2_poly_t b){
   return x ;
 }
 
+#ifdef __GNUC__
+f2_poly_t
+f2_poly_parity(f2_poly_t P){
+  return __builtin_parityll(P);
+}
+#else
 f2_poly_t
 f2_poly_parity(f2_poly_t P){
   return f2_poly_rem(P,3); // Ici, on aurait pu faire de deux façon différente, Soit on rend le reste de la division euclidienne par X+1
                               // Soit on retourne la somme de tous les bits modulo 2 dans F2
 }
+#endif
 
 f2_poly_t
 f2_poly_derive(f2_poly_t P){
@@ -174,6 +175,10 @@ f2_poly_recip(f2_poly_t P){
   return res ; // on retourne le polynome ainsi construit
 }
 
+f2_poly_t
+f2_poly_recip(f2_poly_t P) {
+  // reversing bits 
+}
 
 f2_poly_t
 f2_poly_random_inf(size_t taille){
@@ -187,6 +192,14 @@ f2_poly_random_inf(size_t taille){
   return res ; // on retourne ainsi le résultat
 }
 
+/* Or using a Mersen twister */
+f2_poly_t
+f2_poly_random_inf(int8_t taille) {
+  f2_poly_t ret = (f2_poly_t)rand();
+  ret << 32;
+  ret |= rand();
+  return ret;
+}
 
 f2_poly_t // Toute la premiere partie de la fonction est semblable à la précédente
 f2_poly_random(size_t taille){
@@ -200,6 +213,16 @@ f2_poly_random(size_t taille){
   res += 1<<i ; // Pour être sûr que le polynom soit de degré exactement égale à taille, on ajoute le bit à la position "taille" (manuellement)
   return res ;  // On retourne le resultats
 }
+
+
+/* Or using a Mersen twister */
+f2_poly_t
+f2_poly_random(int8_t taille) {
+  f2_poly_t ret = f2_poly_random_inf(taille);
+  ret |= 1<<taille;
+  return ret;
+}
+
 
 int
 f2_poly_irred(f2_poly_t p){

@@ -18,6 +18,11 @@ typedef uint64_t f2_poly_t;
 // Masque pour les coefficients de degré impair (utile par ex. pour dériver)
 #define UNZERO 0xaaaaaaaaaaaaaaaaULL
 
+#define GET_ITH_BIT(x,i) ((x>>i) | 0x1)
+#define ITH_BIT_IS_ZERO(x,i) (GET_ITH_BIT(x,i) == 0x0)
+#define ITH_BIT_IS_ONE(x,i) (GET_ITH_BIT(x,i) == 0x1)
+#define IS_NULL(x) (x == 0x0)
+
 // le type des prédicats sur les polynômes
 typedef int(*f2_poly_pred)(f2_poly_t);
 
