@@ -8,12 +8,33 @@
 #include <math.h>
 #include "f2_poly.h"
 #include "arithm.h"
+#include "lfsr.h"
 
 #ifdef __GNUC__
+
+typedef union {
+  uint64_t t64;
+  uint32_t t32[2];
+  uint16_t t16[4];
+  uint8_t t8[8];
+} bytes_array
+
 /* clzll: GCC builtin function returning the number of leading-0 for unsigned long long */
+/* clz: works for 32bits integer */
+/* clz(l|ll): works for 64bit integer */
 int8_t
 f2_poly_deg(f2_poly_t p){
+#ifdef WITH_8BITS
+  bytes_array ba;  ba.t64[0] = 0; ba.t8[3] = p;
+  return (p == ZERO) ? ZERO : __builtin_clz(p.t32)-1;
+#elif defined WITH_16BITS
+  bytes_array ba;  ba.t64[0] = 0;  ba.t16[1] = p;
+  return (p == ZERO) ? ZERO : __builtin_clz(p)-1;
+#elif defined WITH_32BITS
+  return (p == ZERO) ? ZERO : __builtin_clz(p)-1;
+#elif defined WITH_64BITS
   return (p == ZERO) ? ZERO : __builtin_clzll(p)-1;
+#endif
 }
 #else
 /* Computes the degree of a polynomial */
@@ -22,11 +43,12 @@ f2_poly_deg(f2_poly_t p){
 int8_t
 f2_poly_deg(f2_poly_t p){
   int8_t i = LEN-1 ;
-  if (p == 0x0) return -1;
+  if (p == ZERO) return -1;
   while (NTH_BIT_IS_ZERO(p,i)) {i--;};
   return i;
 }
 
+/* Pretty printer for polynomial */
 void
 f2_poly_print(f2_poly_t p, const char c , FILE * fd){
   char fmt_xn[] = {" + %c^%d", ""};
@@ -61,16 +83,28 @@ f2_poly_rem(f2_poly_t p, f2_poly_t q) {
   return res;
 }
 
+/* if (dnd){ // condition : dnd is not 0                           */
+/*      if(f2_poly_deg(dnd)< f2_poly_deg(der)){                    */
+/*        return dnd ;                                             */
+/*      }                                                          */
+/* ...                                                             */
+/* } else {                                                        */
+/*      return 0 ; */
+/* } */
+
+/* Computes the division between two polynomials */
+/* inputs: f2_poly_t dnd, der*/
+/* outputs: f2_poly_t *R, *Q */
 f2_poly_t
 f2_poly_div(f2_poly_t * R ,f2_poly_t * Q , f2_poly_t dnd, f2_poly_t der){
   *Q = 0;
   *R = 0;
 
-  if (dnd == 0 || dnd < der) return dnd;
-  
   int8_t deg_dnd = f2_poly_deg(dnd);
   int8_t deg_der = f2_poly_deg(der);
   int8_t deg_diff = f2_poly_deg(dnd);
+
+  if (dnd == 0 || deg_dnd < deg_der) return dnd;
 
   f2_poly_t r = dnd, q = 0;
   
@@ -88,6 +122,7 @@ f2_poly_div(f2_poly_t * R ,f2_poly_t * Q , f2_poly_t dnd, f2_poly_t der){
   return 0;
 }
 
+/* Computes the GCD between two polynomials */
 f2_poly_t
 f2_poly_gcd(f2_poly_t a, f2_poly_t b){
   f2_poly_t d = 0;
@@ -108,11 +143,14 @@ f2_poly_gcd(f2_poly_t a, f2_poly_t b){
   return a << d;
 }
 
+/* Computes a*x*b ? */
 f2_poly_t
-f2_poly_xtimes(f2_poly_t a , f2_poly_t b ){ //
-  return f2_poly_rem(a>>1 , b); // muliplier par le monome X revient à effectuer un décalage vers la droite
+f2_poly_xtimes(f2_poly_t a , f2_poly_t b){ 
+  /* Multiplies by the monomial X is like shifting to the right */
+  return f2_poly_rem(a>>1 , b); 
 }
 
+/* Computes a*b % n ? */
 f2_poly_t
 f2_poly_times(f2_poly_t a, f2_poly_t b , f2_poly_t n){
   f2_poly_t res = 0;
@@ -124,33 +162,48 @@ f2_poly_times(f2_poly_t a, f2_poly_t b , f2_poly_t n){
   return res;
 }
 
+/* Computes b^(2^n) ? */
 f2_poly_t
 f2_poly_x2n(size_t pow, f2_poly_t b){
-  f2_poly_t x = 2; // Nous allons multiplier par un monome de degrés une puissance de 2, donc on initilise un polynome à x^2
-  for(size_t i = 0; i < pow ; i++){ // Nous allons boucler sur la valeur de la puissance de 2
-    x = f2_poly_times(x,x,b); // Et nous allons appliquer la fonction de multiplication sur x par x afin d'avoir des puissance de x en puissance de 2
+  f2_poly_t x = 2; 
+  for(int i = 0; i < pow ; i++){ 
+    x = f2_poly_times(x,x,b); 
   }
   return x ;
 }
 
 #ifdef __GNUC__
+/* Computes the parity of the polynomial */
 f2_poly_t
 f2_poly_parity(f2_poly_t P){
+#ifdef WITH_8BITS
+  return __builtin_parity(P);
+#elif defined WITH_16BITS
+  return __builtin_parity(P);
+#elif defined WITH_32BITS
+  return __builtin_parity(P);
+#elif defined WITH_64BITS
+  return __builtin_parityll(P);
+#endif
   return __builtin_parityll(P);
 }
 #else
+/* Computes the parity of the polynomial */
+/* Equivalent to computing the rest of the euclidian division by X+1 */
 f2_poly_t
 f2_poly_parity(f2_poly_t P){
-  return f2_poly_rem(P,3); // Ici, on aurait pu faire de deux façon différente, Soit on rend le reste de la division euclidienne par X+1
-                              // Soit on retourne la somme de tous les bits modulo 2 dans F2
+  return f2_poly_rem(P,3);
 }
 #endif
 
+/* Derives a polynomial */
+/* Equivalent to shifting to the left and to setting even bits to 0 */
 f2_poly_t
 f2_poly_derive(f2_poly_t P){
-  return((P&UNZERO)>>1); // Ici, lorsque l'on dérive un polynome dans F2 c'est equivalent à décaler tous les bit d'une position
-}                        // Sans oublier de mettre tous les bits en position pair à 0
+  return((P&UNZERO)>>1);
+}
 
+/* Computes P^n ? */
 f2_poly_t
 f2_poly_xn(size_t n, f2_poly_t P){
   f2_poly_t res = 1;
@@ -165,33 +218,47 @@ f2_poly_xn(size_t n, f2_poly_t P){
   return res;
 }
 
-f2_poly_t
-f2_poly_recip(f2_poly_t P){
-  size_t taille = f2_poly_deg(P); // On stock la taille du polynome dans une variable
-  f2_poly_t res = 0 ; // Pour cette fonction nous devons uniquement lire et stocker ses bits en sens inverse
-  for(int i = taille ; i > 0 ; i--){ // On entame donc une boucle sur la taille du polynome
-    res ^= P&(1<<i)<<(taille-i) ; // res qui était initialisé à 0 est incrémenté en lisant les bits de P en sens inverse
-  }
-  return res ; // on retourne le polynome ainsi construit
+#ifdef __GNUC__
+uint8_t ReverseBitsInByte(uint8_t v) {
+  return (v * 0x0202020202ULL & 0x010884422010ULL) % 1023;
 }
 
 f2_poly_t
 f2_poly_recip(f2_poly_t P) {
-  // reversing bits 
+  bytes_array ba;  ba.t64[0];
+#ifdef WITH_8BITS
+  return ReverseBitsInByte(P);
+#elif defined WITH_16BITS
+  bytes_array ba;  ba.t16[0] = P;
+#elif defined WITH_32BITS
+  bytes_array ba;  ba.t32[0] = P;
+#elif defined WITH_64BITS
+  bytes_array ba;  ba.t64 = P;
+#endif
+  for (size_t i = 0; i < sizeof(P); i++)
+    ba.t8[i] = ReverseBitsInByte(ba.t8[i]);
+#elif defined WITH_16BITS
+  return ba.t16[0];
+#elif defined WITH_32BITS
+  return ba.t32[0];
+#elif defined WITH_64BITS
+  return ba.t64;
+#endif
 }
-
+#else
+/* Computes the reciprocal polynomial */
 f2_poly_t
-f2_poly_random_inf(size_t taille){
-  f2_poly_t res = 0; // Nous initialisons le resulats à 0
-  int alea ; // nous allons prendre une variable qui va gérer l'aléa
-  srand(time(NULL)); // On Génère l'aléa grace a la fonction srand() et la fonction time()
-  for(int i = 0 ; i< taille ; i++){ // Nous allons entamer une boucle
-    alea = rand(); // choisir une valeur aléaoitre
-    res += (alea % 2)<<i; // Et suivant que la variable choisie est pair ou impair (aléatoirement) on met un bit à 0 ou à 1
+f2_poly_recip(f2_poly_t P){
+  size_t taille = f2_poly_deg(P); 
+  f2_poly_t res = 0 ; 
+  for(int i = taille ; i > 0 ; i--){ 
+    res ^= P&(1<<i)<<(taille-i) ; 
   }
-  return res ; // on retourne ainsi le résultat
+  return res ;
 }
+#endif
 
+/* Return a random polynomial */
 /* Or using a Mersen twister */
 f2_poly_t
 f2_poly_random_inf(int8_t taille) {
@@ -201,20 +268,7 @@ f2_poly_random_inf(int8_t taille) {
   return ret;
 }
 
-f2_poly_t // Toute la premiere partie de la fonction est semblable à la précédente
-f2_poly_random(size_t taille){
-  f2_poly_t res = 0;
-  int alea , i;
-  srand(time(NULL));
-  for( i = 0 ; i<= taille-1 ; i++){
-    alea = rand();
-    res += (alea % 2)<<i;
-  }
-  res += 1<<i ; // Pour être sûr que le polynom soit de degré exactement égale à taille, on ajoute le bit à la position "taille" (manuellement)
-  return res ;  // On retourne le resultats
-}
-
-
+/* Return a random polynomial of size taille */
 /* Or using a Mersen twister */
 f2_poly_t
 f2_poly_random(int8_t taille) {
@@ -224,33 +278,32 @@ f2_poly_random(int8_t taille) {
 }
 
 
+/* Checks if the polynomial is irreductible or not */
+/* Returns 1 if it is irreductible and 0 otherwise */
 int
-f2_poly_irred(f2_poly_t p){
-  int deg_p = f2_poly_deg(p) ;// On Stocke la valeur du degré de p
-  if(!(p&&1)){ // ici, le cas ou le polynom est divisble par le monome X
-    return 0 ;
+f2_poly_irred(f2_poly_t p) {
+  /* X is divisible by monomial X or the polynomial is divisible by X+1*/
+  if (ITH_BIT_IS_ZERO(p,1) || f2_poly_parity(p) == 0) return 0;
+
+  uint64_t tmp_n, pp;
+  uint8_t deg_p = f2_poly_deg(deg_p);
+  f2_poly_t X2n_X = f2_poly_x2n(deg_p, p) ^ (1 << 1), Xpn_X;
+
+  if (!IS_NULL(X2n_X)) return 1;
+  
+  tmp_n = deg_p;
+  while (tmp_n > 1) {
+    pp = pp_diviseur_premier(tmp_n);
+    Xpn_X = f2_poly_x2n(deg_p/pp,p) ^ (1<<1);
+    if(f2_poly_gcd(Xpn_X,p) > 1) return 0 ;      
+    tmp_n = tmp_n/pp ;
   }
-  if(!f2_poly_parity(p)){ // Le cas ou le polynom est pair (divisible par X+1)
-    return 0;
-  }
-  uint64_t tmp_n ; // tmp_n et pp sont des variables qui vont nous servir pour les critères de divisibilités
-  uint64_t pp ;
-  f2_poly_t X2n_X = f2_poly_x2n(deg_p,p) ^ (1<<1); // On construit le polynome X^2^n - X modulo P
-  if (X2n_X == 0){ // le cas ou le polynome X^2^n - X est divisible par le polynome P
-    tmp_n = deg_p ; //
-    while(tmp_n>1){// Dans cette boucle nous allons lister tous les diviseur premiers du degré du polynome
-      pp = pp_diviseur_premier(tmp_n);
-      f2_poly_t Xpn_X = f2_poly_x2n(deg_p/pp,p) ^(1<<1) ; // tester si le polynome du TD est premier avec le polynome P
-      if(f2_poly_gcd(Xpn_X,p)>1){ // Si un moment, nous avons que le GCD est plus grand que 1 alors il renvoie 0 (non irreductible)
-        return 0 ;
-      }
-      tmp_n = tmp_n/pp ;
-    }
-  }
-  return 1 ;// Si le polynome passe tous les tests décrits en TD alors il est irreductible dans F2
+  
+  return 1;
 }
 
 
+/* Checks if the polynomial is prime ? */
 int
 f2_poly_primitive(f2_poly_t p){
   if(!f2_poly_irred(p)){ // on teste d'abord si le polynome est irreductible,

@@ -16,12 +16,28 @@ typedef uint64_t f2_poly_t;
 // Masque pour un polynôme de degré < d, calcule aussi 2^d - 1
 #define MASK(d) (  ~((f2_poly_t)0xffffffffffffffffULL << (d)) )
 // Masque pour les coefficients de degré impair (utile par ex. pour dériver)
-#define UNZERO 0xaaaaaaaaaaaaaaaaULL
+#define UNZERO 0XAAAAAAAAAAAAAAAAULL
+
+#ifdef WITH_8BITS
+#define ZERO ((uint8_t)0)
+#define ONE ((uint8_t)1)
+#elif defined WITH_16BITS
+#define ZERO ((uint16_t)0)
+#define ONE ((uint16_t)1)
+#elif defined WITH_32BITS
+#define ZERO ((uint32_t)0)
+#define ONE ((uint32_t)1)
+#elif defined WITH_64BITS
+#define ZERO ((uint64_t)0)
+#define ONE ((uint64_t)1)
+#endif
 
 #define GET_ITH_BIT(x,i) ((x>>i) | 0x1)
-#define ITH_BIT_IS_ZERO(x,i) (GET_ITH_BIT(x,i) == 0x0)
-#define ITH_BIT_IS_ONE(x,i) (GET_ITH_BIT(x,i) == 0x1)
-#define IS_NULL(x) (x == 0x0)
+#define ITH_BIT_IS_ZERO(x,i) (GET_ITH_BIT(x,i) == ZERO)
+#define ITH_BIT_IS_ONE(x,i) (GET_ITH_BIT(x,i) == ONE)
+#define IS_NULL(x) (x == ZERO)
+#define IS_ONE(x) (x == ONE)
+
 
 // le type des prédicats sur les polynômes
 typedef int(*f2_poly_pred)(f2_poly_t);
